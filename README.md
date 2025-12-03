@@ -63,3 +63,10 @@ I dont really have a concrete idea of how it should look, but I believe the foll
 
 This is just an initial idea! Please don't take these to strict. In my experience it always turns out different that you would expect, so please feel free to play around and try out what feels best!
 
+
+
+# Streamlit Image Selection Demo
+
+Using the Image Selector, select the image you know a known distance point in meters. For example, a tree or fence post. Once an image is selected, scroll down and click on the object you know the distance of. This will pass the pixel coordinates. After clicking the point, enter the distance in meters in the box below. This will add a "distance_m", "px_x", and "px_y" columns to results_detections. Currently the page must be reloaded to see the additions to the predictions csv file. Note: This will modify results_detections.csv
+
+The point of this is to get a calibration point that can be passed to the model to calculate distance. Multiple points can be added by clicking on different images and objects. 
