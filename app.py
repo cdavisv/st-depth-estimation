@@ -514,6 +514,7 @@ with controls_col:
         else:
             new_row = pd.DataFrame([{"x": int(last[0]), "y": int(last[1]), "distance_m": float(d_val)}])
             st.session_state.calib_df = pd.concat([st.session_state.calib_df, new_row], ignore_index=True)
+            st.session_state.results_with_distances = None
             st.success(f"Added point: ({int(last[0])}, {int(last[1])}) → {float(d_val)} m")
 
     st.caption("Your calibration points so far:")
@@ -527,6 +528,7 @@ with controls_col:
     with b2:
         if st.button("Reload from disk", use_container_width=True):
             st.session_state.calib_df = load_calibration_points()
+            st.session_state.results_with_distances = None
             st.success("Reloaded calibration points from disk")
 
     if st.button(
@@ -537,6 +539,7 @@ with controls_col:
         st.session_state.calib_df = pd.DataFrame(columns=["x", "y", "distance_m"])
         st.session_state.last_click = None
         st.session_state.calibration = None
+        st.session_state.results_with_distances = None
         st.warning("Cleared calibration points (not saved until you click Save).")
 
     # --- Calibration fit ---
@@ -590,19 +593,56 @@ with controls_col:
         st.subheader("Step 4: Compute Distances")
         st.caption(
             "Apply your calibration to estimate the distance from the camera to every "
-            "detected animal across all images. Results can be downloaded as a CSV."
+            "detected animal across all images. A depth map is computed per image "
+            "(cached after the first run)."
         )
 
         if st.button(
             "Compute distances for all detections",
             use_container_width=True,
             type="primary",
-            help="Uses the depth map and your calibration to estimate how far each detected animal is from the camera.",
+            help="Uses a per-image depth map and your calibration to estimate how far each detected animal is from the camera.",
         ):
             results = predictions.copy()
             sample_xs, sample_ys, depth_values, distances = [], [], [], []
 
+            # Pre-compute depth maps keyed by relative_path
+            unique_images = results["relative_path"].unique()
+            depth_maps: dict[str, np.ndarray] = {}
+            progress = st.progress(0, text="Computing depth maps...")
+            skipped_images: list[str] = []
+
+            for idx, rel_path in enumerate(unique_images):
+                img_full = os.path.join(IMAGE_FOLDER, rel_path)
+                if os.path.isfile(img_full):
+                    depth_maps[rel_path] = compute_depth_map(img_full, model_id)
+                else:
+                    skipped_images.append(rel_path)
+                progress.progress(
+                    (idx + 1) / len(unique_images),
+                    text=f"Depth maps: {idx + 1}/{len(unique_images)}",
+                )
+
+            progress.empty()
+
+            if skipped_images:
+                st.warning(
+                    f"Skipped {len(skipped_images)} image(s) not found on disk: "
+                    + ", ".join(skipped_images[:5])
+                    + ("..." if len(skipped_images) > 5 else "")
+                )
+
             for _, row in results.iterrows():
+                rel_path = row.get("relative_path")
+                dm = depth_maps.get(rel_path)
+
+                if dm is None:
+                    sample_xs.append(None)
+                    sample_ys.append(None)
+                    depth_values.append(None)
+                    distances.append(None)
+                    continue
+
                 left = _safe_int(row.get("bbox_left"))
                 top = _safe_int(row.get("bbox_top"))
                 right = _safe_int(row.get("bbox_right"))
@@ -616,10 +656,10 @@ with controls_col:
                     continue
 
                 x, y = compute_sample_point(left, top, right, bottom, point_mode)
-                y = max(0, min(y, depth_map_state.shape[0] - 1))
-                x = max(0, min(x, depth_map_state.shape[1] - 1))
+                y = max(0, min(y, dm.shape[0] - 1))
+                x = max(0, min(x, dm.shape[1] - 1))
 
-                dv = float(depth_map_state[y, x])
+                dv = float(dm[y, x])
                 dist = apply_calibration(dv, calibration)
                 sample_xs.append(x)
                 sample_ys.append(y)
